@@ -18,7 +18,6 @@ DISCORD_BOT_TOKEN = os.environ.get('DISCORD_BOT_TOKEN', '')
 GUILD_ID = os.environ.get('GUILD_ID', '643124604914630656')
 
 def get_channel_mapping(bot_token: str, guild_id: str) -> Dict[str, str]:
-    """Finds channel IDs by name in the server."""
     url = f"https://discord.com/api/v10/guilds/{guild_id}/channels"
     req = urllib.request.Request(
         url,
@@ -69,14 +68,8 @@ def main():
         logging.warning("No game links returned.")
         return
 
-    if not seen:
-        logging.info("First run: initializing baseline...")
-        for u in urls:
-            slug = u.rstrip('/').split('/')[-1]
-            seen.add(f"{slug}:baseline")
-        save_seen_games(seen)
-        logging.info("Baseline saved.")
-        return
+    # Extract all seen slugs so we can distinguish brand NEW games from Steam BUILD UPDATES
+    seen_slugs = {entry.split(':')[0] for entry in seen}
 
     new_count = 0
     for url in reversed(urls):
@@ -85,31 +78,40 @@ def main():
             continue
 
         game_id = game_data['id']
+        slug = game_data['slug']
+
+        # If this exact (slug + build) was already published, skip
         if game_id in seen:
             continue
 
-        logging.info(f"✨ NEW GAME DETECTED: {game_data['title']} (Build: {game_data['build']})")
-        dispatch_info = create_discord_payload(game_data)
+        # If slug exists in our database but build is different, it is a BUILD UPDATE!
+        is_update = (slug in seen_slugs)
+
+        status_text = "BUILD UPDATE" if is_update else "NEW GAME"
+        logging.info(f"✨ {status_text} DETECTED: {game_data['title']} (Build: {game_data['build']})")
+
+        dispatch_info = create_discord_payload(game_data, is_update=is_update)
         payload = dispatch_info['payload']
         target_name = dispatch_info['target_channel']
         target_ch_id = channels.get(target_name)
 
-        # 1. Post to category folder channel (e.g. #🏰-sim-strategy)
+        # 1. Post to category folder channel
         if target_ch_id:
             send_bot_message(DISCORD_BOT_TOKEN, target_ch_id, payload)
             time.sleep(1)
 
-        # 2. Also stream to #📢-all-releases
+        # 2. Stream to #📢-all-releases
         if all_releases_ch and all_releases_ch != target_ch_id:
             send_bot_message(DISCORD_BOT_TOKEN, all_releases_ch, payload)
             time.sleep(1)
 
         seen.add(game_id)
+        seen_slugs.add(slug)
         new_count += 1
 
     if new_count > 0:
         save_seen_games(seen)
-        logging.info(f"Scan complete. Dispatched {new_count} new games into folder channels.")
+        logging.info(f"Scan complete. Dispatched {new_count} releases into folder channels.")
     else:
         logging.info("Scan complete. Library is up to date.")
 

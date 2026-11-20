@@ -2,7 +2,6 @@ import json
 import urllib.request
 from typing import Dict, Any, Optional, List
 
-# Category Mappings matching channel names in your Discord category folder
 CATEGORIES = {
     "sim_strategy": {
         "channel_name": "🏰-sim-strategy",
@@ -110,7 +109,12 @@ def determine_category(title: str, genres: List[str], steam_genres: List[str] = 
         "tag": CATEGORIES[best_cat]["tag"]
     }
 
-def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
+def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dict[str, Any]:
+    """
+    Builds a rich Discord Embed with crystal-clear Status Headings:
+    - ✨ NEW RELEASE | <Title> [<Version>]
+    - 🔄 BUILD UPDATE | <Title> [<Version>]
+    """
     cat_info = determine_category(
         game.get('title', ''),
         game.get('genres', []),
@@ -129,6 +133,11 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
     desc = game.get('description', '').strip()
     if len(desc) > 240:
         desc = desc[:240] + "..."
+
+    # High-Visibility Banner Header
+    badge = "🔄 [BUILD UPDATE]" if is_update else "✨ [NEW RELEASE]"
+    status_header = f"**{badge}** • {cat_info['tag']}"
+    embed_title = f"{badge} {game['title']} [{game.get('version', 'Latest')}]"
 
     fields = [
         {
@@ -157,7 +166,7 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
             "inline": True
         },
         {
-            "name": "🏷 Category",
+            "name": "🏷 Folder Category",
             "value": f"`{cat_info['tag']}`",
             "inline": True
         },
@@ -177,10 +186,10 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
         })
 
     main_embed = {
-        "title": f"🎮 {game['title']} [{game.get('version', 'Latest')}]",
+        "title": embed_title,
         "url": game['url'],
-        "description": f"*{desc}*",
-        "color": cat_info["color"],
+        "description": f"{status_header}\n\n*{desc}*",
+        "color": 16753920 if is_update else cat_info["color"], # Amber color for updates
         "thumbnail": {"url": game['poster']} if game.get('poster') else None,
         "fields": fields,
         "footer": {
@@ -229,6 +238,7 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "payload": {
+            "content": f"{status_header} — **{game['title']}**",
             "embeds": embeds,
             "components": components
         },
@@ -236,7 +246,6 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 def send_bot_message(bot_token: str, channel_id: str, payload: Dict[str, Any]) -> bool:
-    """Delivers message directly to a specific Discord Channel via Bot Token."""
     try:
         url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
         data = json.dumps(payload).encode('utf-8')

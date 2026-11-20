@@ -7,6 +7,7 @@ from typing import Set, Dict
 
 from scraper import fetch_recent_game_urls, parse_game_page
 from discord_dispatcher import create_discord_payload, send_bot_message
+from free_games import fetch_epic_free_games, create_free_game_payload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,18 +59,34 @@ def main():
         logging.error("DISCORD_BOT_TOKEN is not set.")
         return
 
-    logging.info("Starting AnkerGames Radar scan...")
+    logging.info("Starting Radar Scan (AnkerGames + Epic Free Games)...")
     channels = get_channel_mapping(DISCORD_BOT_TOKEN, GUILD_ID)
     all_releases_ch = channels.get('📢-all-releases')
+    free_games_ch = channels.get('🎁-free-games')
 
     seen = load_seen_games()
+    seen_slugs = {entry.split(':')[0] for entry in seen}
+
+    # 1. Check Epic Games Free Promotions
+    try:
+        epic_games = fetch_epic_free_games()
+        for fg in epic_games:
+            fg_id = fg['id']
+            if fg_id not in seen and free_games_ch:
+                logging.info(f"🎁 NEW EPIC FREE GIVEAWAY: {fg['title']}")
+                payload = create_free_game_payload(fg)
+                send_bot_message(DISCORD_BOT_TOKEN, free_games_ch, payload)
+                seen.add(fg_id)
+                time.sleep(1)
+    except Exception as e:
+        logging.error(f"Error checking free games: {e}")
+
+    # 2. Check AnkerGames Releases & Updates
     urls = fetch_recent_game_urls()
     if not urls:
-        logging.warning("No game links returned.")
+        logging.warning("No game links returned from AnkerGames.")
+        save_seen_games(seen)
         return
-
-    # Extract all seen slugs so we can distinguish brand NEW games from Steam BUILD UPDATES
-    seen_slugs = {entry.split(':')[0] for entry in seen}
 
     new_count = 0
     for url in reversed(urls):
@@ -80,13 +97,10 @@ def main():
         game_id = game_data['id']
         slug = game_data['slug']
 
-        # If this exact (slug + build) was already published, skip
         if game_id in seen:
             continue
 
-        # If slug exists in our database but build is different, it is a BUILD UPDATE!
         is_update = (slug in seen_slugs)
-
         status_text = "BUILD UPDATE" if is_update else "NEW GAME"
         logging.info(f"✨ {status_text} DETECTED: {game_data['title']} (Build: {game_data['build']})")
 
@@ -95,12 +109,10 @@ def main():
         target_name = dispatch_info['target_channel']
         target_ch_id = channels.get(target_name)
 
-        # 1. Post to category folder channel
         if target_ch_id:
             send_bot_message(DISCORD_BOT_TOKEN, target_ch_id, payload)
             time.sleep(1)
 
-        # 2. Stream to #📢-all-releases
         if all_releases_ch and all_releases_ch != target_ch_id:
             send_bot_message(DISCORD_BOT_TOKEN, all_releases_ch, payload)
             time.sleep(1)
@@ -109,11 +121,8 @@ def main():
         seen_slugs.add(slug)
         new_count += 1
 
-    if new_count > 0:
-        save_seen_games(seen)
-        logging.info(f"Scan complete. Dispatched {new_count} releases into folder channels.")
-    else:
-        logging.info("Scan complete. Library is up to date.")
+    save_seen_games(seen)
+    logging.info(f"Scan complete. Dispatched {new_count} new entries. State saved.")
 
 if __name__ == '__main__':
     main()

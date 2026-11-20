@@ -1,5 +1,6 @@
 import json
 import urllib.request
+import re
 from typing import Dict, Any, Optional, List
 
 CATEGORIES = {
@@ -69,6 +70,25 @@ CATEGORIES = {
     }
 }
 
+def determine_size_tier(size_str: str) -> Dict[str, str]:
+    """Analyzes game size and assigns a smart size tier badge."""
+    m = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(GB|MB)', str(size_str), re.I)
+    if not m:
+        return {"badge": "💾 Standard PC", "tier": "standard"}
+    
+    val = float(m.group(1))
+    unit = m.group(2).upper()
+
+    if unit == 'GB':
+        if val >= 40.0:
+            return {"badge": "🔥 AAA HEAVYWEIGHT (>40 GB)", "tier": "heavy"}
+        elif val <= 10.0:
+            return {"badge": "⚡ PORTABLE / COMPACT (<10 GB)", "tier": "compact"}
+        else:
+            return {"badge": "📦 MID-SIZE PC", "tier": "mid"}
+    else: # MB
+        return {"badge": "⚡ ULTRA COMPACT (Light)", "tier": "compact"}
+
 def determine_category(title: str, genres: List[str], steam_genres: List[str] = None) -> Dict[str, Any]:
     title_lower = title.lower()
     genres_lower = [g.lower() for g in genres]
@@ -110,17 +130,14 @@ def determine_category(title: str, genres: List[str], steam_genres: List[str] = 
     }
 
 def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dict[str, Any]:
-    """
-    Builds a rich Discord Embed with crystal-clear Status Headings:
-    - ✨ NEW RELEASE | <Title> [<Version>]
-    - 🔄 BUILD UPDATE | <Title> [<Version>]
-    """
     cat_info = determine_category(
         game.get('title', ''),
         game.get('genres', []),
         game.get('steam_genres', [])
     )
     
+    size_info = determine_size_tier(game.get('size', ''))
+
     all_genres = []
     for g in (game.get('steam_genres', []) + game.get('genres', [])):
         if g not in all_genres:
@@ -134,15 +151,14 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
     if len(desc) > 240:
         desc = desc[:240] + "..."
 
-    # High-Visibility Banner Header
     badge = "🔄 [BUILD UPDATE]" if is_update else "✨ [NEW RELEASE]"
-    status_header = f"**{badge}** • {cat_info['tag']}"
+    status_header = f"**{badge}** • {cat_info['tag']} • `{size_info['badge']}`"
     embed_title = f"{badge} {game['title']} [{game.get('version', 'Latest')}]"
 
     fields = [
         {
             "name": "💾 File Size",
-            "value": f"`{game.get('size', 'Unknown')}`",
+            "value": f"`{game.get('size', 'Unknown')}` ({size_info['badge']})",
             "inline": True
         },
         {
@@ -166,7 +182,7 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
             "inline": True
         },
         {
-            "name": "🏷 Folder Category",
+            "name": "🏷 Category",
             "value": f"`{cat_info['tag']}`",
             "inline": True
         },
@@ -189,7 +205,7 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
         "title": embed_title,
         "url": game['url'],
         "description": f"{status_header}\n\n*{desc}*",
-        "color": 16753920 if is_update else cat_info["color"], # Amber color for updates
+        "color": 16753920 if is_update else cat_info["color"],
         "thumbnail": {"url": game['poster']} if game.get('poster') else None,
         "fields": fields,
         "footer": {
@@ -214,27 +230,34 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
     elif game.get('poster'):
         main_embed["image"] = {"url": game['poster']}
 
-    components = [
+    # Action Row Buttons with TorBox Cloud Send & Links
+    buttons = [
         {
-            "type": 1,
-            "components": [
-                {
-                    "type": 2,
-                    "style": 5,
-                    "label": "🌐 Open on AnkerGames",
-                    "url": game['url']
-                }
-            ]
+            "type": 2,
+            "style": 5,
+            "label": "🌐 Open on AnkerGames",
+            "url": game['url']
         }
     ]
 
     if game.get('steam_url'):
-        components[0]["components"].append({
+        buttons.append({
             "type": 2,
             "style": 5,
             "label": "🎮 Steam Page",
             "url": game['steam_url']
         })
+
+    # TorBox Cloud Web Link helper
+    torbox_cloud_url = f"https://torbox.app/dashboard"
+    buttons.append({
+        "type": 2,
+        "style": 5,
+        "label": "⚡ TorBox Cloud",
+        "url": torbox_cloud_url
+    })
+
+    components = [{"type": 1, "components": buttons}]
 
     return {
         "payload": {

@@ -2,8 +2,6 @@ import json
 import urllib.request
 from typing import Dict, Any, Optional, List
 
-# Category mappings & Color Themes (Decimal color codes for Discord)
-# Purple (Action/RPG): 10181046, Red (Horror): 15158332, Green (Indie/Cozy): 3066993, Gold (AAA/Featured): 16766720
 GENRE_ROUTING = {
     "action_rpg": {
         "keywords": ["action", "rpg", "souls", "adventure", "hack and slash", "open world", "fighting"],
@@ -33,7 +31,6 @@ GENRE_ROUTING = {
 }
 
 def determine_category(genres: List[str]) -> Dict[str, Any]:
-    """Matches game genres against predefined categories."""
     genres_lower = [g.lower() for g in genres]
     for cat_id, cfg in GENRE_ROUTING.items():
         for kw in cfg["keywords"]:
@@ -45,23 +42,27 @@ def determine_category(genres: List[str]) -> Dict[str, Any]:
                 }
     return {
         "category": "general",
-        "color": 5793266, # Slate Dark
+        "color": 5793266,
         "tag": "🎮 PC Game Release"
     }
 
-def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
-    """Builds a rich Discord Embed with components/buttons."""
+def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[str, Any]:
+    """Builds a rich Discord Embed with a 4-image screenshot collage grid + poster."""
     cat_info = determine_category(game.get('genres', []))
-    
-    # Format genres as readable tags
     genre_str = ", ".join(game.get('genres', [])[:5]) or "Action / PC"
     deck_str = "✅ Verified / Playable" if game.get('deck_verified') else "❔ Unchecked"
     
-    embed = {
+    # Clean description
+    desc = game.get('description', '').strip()
+    if len(desc) > 280:
+        desc = desc[:280] + "..."
+
+    main_embed = {
         "title": f"🎮 {game['title']}",
         "url": game['url'],
-        "description": f"*{game.get('description', '')[:220]}...*",
+        "description": f"*{desc}*",
         "color": cat_info["color"],
+        "thumbnail": {"url": game['poster']} if game.get('poster') else None,
         "fields": [
             {
                 "name": "💾 File Size",
@@ -89,7 +90,7 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
                 "inline": True
             },
             {
-                "name": "🏷 Category Feed",
+                "name": "🏷 Category",
                 "value": f"`{cat_info['tag']}`",
                 "inline": True
             }
@@ -100,17 +101,30 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
         }
     }
 
-    if game.get('poster'):
-        embed["image"] = {"url": game['poster']}
+    if not main_embed.get("thumbnail"):
+        del main_embed["thumbnail"]
 
-    # Action Row Buttons (Standard Discord Webhook / Bot Action Components)
+    screenshots = game.get('screenshots', [])
+    embeds = [main_embed]
+
+    # Discord 4-image collage: sharing the exact same `url` creates a native mosaic gallery
+    if screenshots:
+        main_embed["image"] = {"url": screenshots[0]}
+        for shot_url in screenshots[1:4]:
+            embeds.append({
+                "url": game['url'],
+                "image": {"url": shot_url}
+            })
+    elif game.get('poster'):
+        main_embed["image"] = {"url": game['poster']}
+
     components = [
         {
-            "type": 1, # Action Row
+            "type": 1,
             "components": [
                 {
-                    "type": 2, # Link Button
-                    "style": 5, # URL
+                    "type": 2,
+                    "style": 5,
                     "label": "🌐 Open on AnkerGames",
                     "url": game['url']
                 }
@@ -126,26 +140,37 @@ def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
             "url": game['steam_url']
         })
 
-    return {
+    payload = {
         "username": "AnkerGames Radar",
         "avatar_url": "https://ankergames.net/favicon/apple-touch-icon.png",
-        "embeds": [embed],
+        "embeds": embeds,
         "components": components
     }
 
+    # Forum channel post title
+    if is_forum:
+        payload["thread_name"] = f"{cat_info['tag']} | {game['title']} [{game.get('version', 'Latest')}]"
+
+    return payload
+
 def send_discord_webhook(webhook_url: str, payload: Dict[str, Any]) -> bool:
-    """Delivers the payload to Discord webhook."""
+    """Delivers the payload to Discord webhook (supports both standard text and forum channels)."""
     try:
+        # Append ?wait=true for forum channels if not present
+        target_url = webhook_url
+        if "thread_name" in payload and "?wait=true" not in target_url:
+            target_url += "?wait=true"
+
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
-            webhook_url,
+            target_url,
             data=data,
             headers={
                 'Content-Type': 'application/json',
                 'User-Agent': 'AnkerRadar/1.0 DiscordBot'
             }
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=12) as resp:
             return resp.status in [200, 204]
     except Exception as e:
         print(f"[Discord] Failed to send notification: {e}")

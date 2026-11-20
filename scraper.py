@@ -62,10 +62,15 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
             # Poster image
             images = video_game.get('image', [])
             poster = images[0] if (isinstance(images, list) and images) else ''
-            if not poster:
-                # Fallback to screenshot
-                screens = video_game.get('screenshot', [])
-                poster = screens[0] if (isinstance(screens, list) and screens) else ''
+            
+            # Screenshots (up to 4 for Discord collage)
+            screenshots = video_game.get('screenshot', [])
+            if not isinstance(screenshots, list):
+                screenshots = [screenshots] if screenshots else []
+            
+            # If no poster from image, pick first screenshot
+            if not poster and screenshots:
+                poster = screenshots[0]
 
             # Steam build number
             text_all = soup.get_text()
@@ -94,6 +99,7 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
                 'size': size,
                 'genres': genres,
                 'poster': poster,
+                'screenshots': screenshots[:4],
                 'url': game_url,
                 'steam_url': steam_url,
                 'deck_verified': deck_verified,
@@ -102,11 +108,3 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[AnkerScraper] Error parsing {game_url}: {e}")
         return None
-
-if __name__ == '__main__':
-    urls = fetch_recent_game_urls()
-    print(f"Discovered {len(urls)} games.")
-    if urls:
-        print("\nTesting parse on first game:")
-        sample = parse_game_page(urls[0])
-        print(json.dumps(sample, indent=2))

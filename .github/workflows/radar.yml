@@ -1,25 +1,27 @@
-name: AnkerGames Radar Worker
+name: AnkerGames 24/7 Radar Worker
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '0 */5 * * *'
   workflow_dispatch:
 
 concurrency:
-  group: ankergames-radar
-  cancel-in-progress: false
+  group: ankergames-radar-worker
+  cancel-in-progress: true
+
+permissions:
+  contents: write
 
 jobs:
   poll:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GH_PAT || github.token }}
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,20 +30,18 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: Run Radar Scan Cycle
+      - name: Run 24/7 Radar Loop
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           GUILD_ID: ${{ secrets.GUILD_ID }}
-        run: |
-          python3 run_once.py
+        run: python3 run_once.py
 
-      - name: Persist Seen Games
+      - name: Commit State Changes
+        if: always()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add seen_games.json
-          git commit -m "chore: persist seen_games" || echo "No changes to commit"
-          git push origin main || echo "Nothing to push"
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: persist seen_games" && git push)

@@ -3,6 +3,7 @@ import json
 import logging
 import urllib.request
 import time
+import random
 from typing import Set, Dict
 
 from scraper import fetch_recent_game_urls, parse_game_page
@@ -17,6 +18,7 @@ logging.basicConfig(
 SEEN_FILE = os.environ.get('SEEN_FILE', 'seen_games.json')
 DISCORD_BOT_TOKEN = os.environ.get('DISCORD_BOT_TOKEN', '')
 GUILD_ID = os.environ.get('GUILD_ID', '643124604914630656')
+CYCLE_MAX_DURATION = int(os.environ.get('CYCLE_MAX_DURATION', '19800'))  # ~5.5 hours per runner
 
 def get_channel_mapping(bot_token: str, guild_id: str) -> Dict[str, str]:
     url = f"https://discord.com/api/v10/guilds/{guild_id}/channels"
@@ -54,18 +56,10 @@ def save_seen_games(seen: Set[str]):
     except Exception as e:
         logging.error(f"Error saving {SEEN_FILE}: {e}")
 
-def main():
-    if not DISCORD_BOT_TOKEN:
-        logging.error("DISCORD_BOT_TOKEN is not set.")
-        return
-
-    logging.info("Starting Radar Scan (All-Releases Unified Stream + Category Routing)...")
-    channels = get_channel_mapping(DISCORD_BOT_TOKEN, GUILD_ID)
+def run_single_scan(channels: Dict[str, str], seen: Set[str], seen_slugs: Set[str]) -> int:
     all_releases_ch = channels.get('📢-all-releases')
     free_games_ch = channels.get('🎁-free-games')
-
-    seen = load_seen_games()
-    seen_slugs = {entry.split(':')[0] for entry in seen}
+    new_count = 0
 
     # 1. Check Epic Games Free Promotions
     try:
@@ -81,35 +75,34 @@ def main():
                     send_bot_message(DISCORD_BOT_TOKEN, free_games_ch, payload)
                     time.sleep(1)
 
-                # B) ALSO mirror into #📢-all-releases so all-releases has EVERY single drop
+                # B) ALSO mirror into #📢-all-releases
                 if all_releases_ch:
                     send_bot_message(DISCORD_BOT_TOKEN, all_releases_ch, payload)
                     time.sleep(1)
 
                 seen.add(fg_id)
+                new_count += 1
     except Exception as e:
         logging.error(f"Error checking free games: {e}")
 
     # 2. Check AnkerGames Releases & Updates
     urls = fetch_recent_game_urls()
     if not urls:
-        logging.warning("No game links returned from AnkerGames.")
-        save_seen_games(seen)
-        return
+        return new_count
 
-    new_count = 0
     for url in reversed(urls):
+        slug = url.rstrip('/').split('/')[-1]
         game_data = parse_game_page(url)
         if not game_data:
             continue
 
         game_id = game_data['id']
-        slug = game_data['slug']
+        actual_slug = game_data.get('slug', slug)
 
         if game_id in seen:
             continue
 
-        is_update = (slug in seen_slugs)
+        is_update = (actual_slug in seen_slugs)
         status_text = "BUILD UPDATE" if is_update else "NEW GAME"
         logging.info(f"✨ {status_text} DETECTED: {game_data['title']} (Build: {game_data['build']})")
 
@@ -118,22 +111,64 @@ def main():
         target_name = dispatch_info['target_channel']
         target_ch_id = channels.get(target_name)
 
-        # A) ALWAYS post into #📢-all-releases (Main unified hub for all categories + updates)
+        # A) Post into #📢-all-releases
         if all_releases_ch:
             send_bot_message(DISCORD_BOT_TOKEN, all_releases_ch, payload)
             time.sleep(1)
 
-        # B) Post into its specific folder category channel (e.g. #🏰-sim-strategy, #⚔️-action-rpg)
+        # B) Post into its specific folder category channel
         if target_ch_id and target_ch_id != all_releases_ch:
             send_bot_message(DISCORD_BOT_TOKEN, target_ch_id, payload)
             time.sleep(1)
 
         seen.add(game_id)
-        seen_slugs.add(slug)
+        seen_slugs.add(actual_slug)
         new_count += 1
 
+    return new_count
+
+def main_continuous_loop():
+    if not DISCORD_BOT_TOKEN:
+        logging.error("DISCORD_BOT_TOKEN is not set.")
+        return
+
+    logging.info("🚀 Starting AnkerGames Radar 24/7 Continuous Polling Loop...")
+    start_time = time.time()
+    channels = get_channel_mapping(DISCORD_BOT_TOKEN, GUILD_ID)
+    seen = load_seen_games()
+    seen_slugs = {entry.split(':')[0] for entry in seen}
+
+    logging.info(f"Loaded {len(seen)} previously indexed game versions ({len(seen_slugs)} unique titles).")
+
+    # Initial scan immediately on startup
+    initial_new = run_single_scan(channels, seen, seen_slugs)
+    if initial_new > 0:
+        save_seen_games(seen)
+
+    last_scan_time = time.time()
+    scan_interval = random.randint(120, 180)  # Every 2 to 3 minutes
+
+    while time.time() - start_time < CYCLE_MAX_DURATION:
+        time.sleep(2)
+        if time.time() - last_scan_time >= scan_interval:
+            last_scan_time = time.time()
+            scan_interval = random.randint(120, 180)
+            try:
+                # Refresh channel mapping periodically if empty
+                if not channels:
+                    channels = get_channel_mapping(DISCORD_BOT_TOKEN, GUILD_ID)
+
+                new_found = run_single_scan(channels, seen, seen_slugs)
+                if new_found > 0:
+                    save_seen_games(seen)
+                    logging.info(f"Dispatched {new_found} new releases. State saved.")
+                else:
+                    logging.info(f"Heartbeat scan complete. Library up to date ({len(seen)} indexed).")
+            except Exception as e:
+                logging.error(f"Scan loop error: {e}")
+
     save_seen_games(seen)
-    logging.info(f"Scan complete. Dispatched {new_count} new entries to both #📢-all-releases and categories. State saved.")
+    logging.info("Worker completed 5.5 hour cycle. Exiting for scheduled seamless handoff.")
 
 if __name__ == '__main__':
-    main()
+    main_continuous_loop()

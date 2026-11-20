@@ -1,0 +1,47 @@
+name: AnkerGames Radar Worker
+
+on:
+  schedule:
+    # Runs every 10 minutes (efficient and zero account burn)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ankergames-radar
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Radar Scan Cycle
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 run_once.py
+
+      - name: Persist Seen Games
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_games.json
+          git commit -m "chore: persist seen_games" || echo "No changes to commit"
+          git push origin main || echo "Nothing to push"

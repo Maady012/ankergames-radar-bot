@@ -9,18 +9,43 @@ HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
+# USER LAPTOP HARDWARE PROFILE: MSI Katana GF66 12UC-881IN
+# CPU: Intel Core i5-12450H (8 Cores, 12 Threads, 4.4 GHz Turbo)
+# GPU: NVIDIA GeForce RTX 3050 Laptop (4GB GDDR6, DLSS support)
+# RAM: 8GB - 16GB DDR4 3200MHz | Screen: 15.6" 1080p 144Hz
+
+def benchmark_katana_performance(min_text: str, rec_text: str) -> str:
+    """Evaluates how a game will run on user's MSI Katana GF66 (i5-12450H / RTX 3050 4GB)."""
+    text = (min_text + " " + rec_text).lower()
+    
+    is_ultra_demanding = any(k in text for k in ['rtx 3080', 'rtx 4070', 'rtx 4080', 'rtx 3070 ti', 'rx 6800', '12 gb vram', '16 gb vram'])
+    is_heavy_vram = any(k in text for k in ['rtx 3060 (12gb)', 'rtx 3070', '8 gb vram', '8gb vram', '6 gb vram', 'rx 6700'])
+    is_easy = any(k in text for k in ['gtx 750', 'gtx 760', 'gtx 960', 'gtx 1050', 'gtx 1060', 'intel hd', 'vega'])
+
+    if is_ultra_demanding:
+        return "⚠️ Heavy (1080p Medium/Low + DLSS Performance, ~40-50 FPS)"
+    elif is_heavy_vram:
+        return "🟢 High Performance (1080p High + DLSS Quality, ~60 FPS)"
+    elif is_easy:
+        return "⚡ Ultra / Max Settings (1080p 80-144 FPS Smooth)"
+    else:
+        return "🟢 Smooth 1080p High (~60+ FPS with DLSS)"
+
 def fetch_steam_metadata(app_id: str) -> Dict[str, Any]:
-    """Fetches genres, rating summary, and top player review from Steam."""
+    """Fetches genres, rating summary, top review, and PC requirements from Steam."""
     if not app_id:
         return {}
     
     res = {
         'genres': [],
         'rating': 'N/A',
-        'top_review': ''
+        'top_review': '',
+        'laptop_perf': '🟢 1080p Playable'
     }
 
-    # 1. Official Steam Store API for Genres
+    # 1. Official Steam Store API for Genres & Requirements
+    min_req_raw = ''
+    rec_req_raw = ''
     try:
         url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -30,10 +55,18 @@ def fetch_steam_metadata(app_id: str) -> Dict[str, Any]:
             if entry.get('success'):
                 app_data = entry.get('data', {})
                 res['genres'] = [g['description'] for g in app_data.get('genres', [])]
-    except Exception as e:
+                pc_req = app_data.get('pc_requirements', {})
+                min_req_raw = pc_req.get('minimum', '')
+                rec_req_raw = pc_req.get('recommended', '')
+    except Exception:
         pass
 
-    # 2. Steam Store Page for Overall Rating (e.g. 'Very Positive (90% of 2,394)')
+    # 2. Benchmark on MSI Katana
+    clean_min = BeautifulSoup(min_req_raw or '', 'html.parser').get_text(separator=' ')
+    clean_rec = BeautifulSoup(rec_req_raw or '', 'html.parser').get_text(separator=' ')
+    res['laptop_perf'] = benchmark_katana_performance(clean_min, clean_rec)
+
+    # 3. Steam Store Page for Overall Rating
     try:
         store_url = f"https://store.steampowered.com/app/{app_id}"
         req = urllib.request.Request(
@@ -54,10 +87,10 @@ def fetch_steam_metadata(app_id: str) -> Dict[str, Any]:
                     if m and score_m:
                         res['rating'] = f"⭐ {score_m.group(1)} ({m.group(1)})"
                         break
-    except Exception as e:
+    except Exception:
         pass
 
-    # 3. Steam Community for Top Helpful User Review
+    # 4. Steam Community for Top Helpful User Review
     try:
         com_url = f"https://steamcommunity.com/app/{app_id}/reviews/?browsefilter=toprated&l=english"
         com_req = urllib.request.Request(com_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
@@ -74,7 +107,7 @@ def fetch_steam_metadata(app_id: str) -> Dict[str, Any]:
                     if len(clean) > 160:
                         clean = clean[:157] + '...'
                     res['top_review'] = clean
-    except Exception as e:
+    except Exception:
         pass
 
     return res
@@ -98,7 +131,7 @@ def fetch_recent_game_urls() -> List[str]:
         return []
 
 def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
-    """Fetches and parses an AnkerGames release, enriching with Steam Ratings and Reviews."""
+    """Fetches and parses an AnkerGames release, enriching with MSI Katana Performance Estimates."""
     req = urllib.request.Request(game_url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -142,7 +175,6 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
             build_match = re.search(r'Current Build\s*([0-9]+)', text_all)
             build = build_match.group(1) if build_match else 'N/A'
 
-            # Steam Store link & App ID
             steam_url = ''
             steam_app_id = ''
             for a in soup.find_all('a', href=True):
@@ -154,15 +186,17 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
                         steam_app_id = m.group(1)
                     break
             
-            # Enrich with Steam Genres, Rating & Top Review
             steam_genres = []
             steam_rating = 'N/A'
             top_review = ''
+            laptop_perf = '🟢 1080p Playable'
+
             if steam_app_id:
                 steam_meta = fetch_steam_metadata(steam_app_id)
                 steam_genres = steam_meta.get('genres', [])
                 steam_rating = steam_meta.get('rating', 'N/A')
                 top_review = steam_meta.get('top_review', '')
+                laptop_perf = steam_meta.get('laptop_perf', '🟢 1080p Playable')
 
             deck_verified = 'Deck' in text_all and ('DeckPlayable' in text_all or 'Deck Verified' in text_all)
             slug = game_url.rstrip('/').split('/')[-1]
@@ -178,6 +212,7 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
                 'steam_genres': steam_genres,
                 'steam_rating': steam_rating,
                 'top_review': top_review,
+                'laptop_perf': laptop_perf,
                 'steam_app_id': steam_app_id,
                 'poster': poster,
                 'screenshots': screenshots[:4],

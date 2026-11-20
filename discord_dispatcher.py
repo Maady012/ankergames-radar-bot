@@ -71,7 +71,6 @@ CATEGORIES = {
 }
 
 def determine_size_tier(size_str: str) -> Dict[str, str]:
-    """Analyzes game size and assigns a smart size tier badge."""
     m = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(GB|MB)', str(size_str), re.I)
     if not m:
         return {"badge": "💾 Standard PC", "tier": "standard"}
@@ -86,7 +85,7 @@ def determine_size_tier(size_str: str) -> Dict[str, str]:
             return {"badge": "⚡ PORTABLE / COMPACT (<10 GB)", "tier": "compact"}
         else:
             return {"badge": "📦 MID-SIZE PC", "tier": "mid"}
-    else: # MB
+    else:
         return {"badge": "⚡ ULTRA COMPACT (Light)", "tier": "compact"}
 
 def determine_category(title: str, genres: List[str], steam_genres: List[str] = None) -> Dict[str, Any]:
@@ -146,6 +145,7 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
 
     deck_str = "✅ Verified / Playable" if game.get('deck_verified') else "❔ Unchecked"
     rating_str = game.get('steam_rating', 'N/A')
+    laptop_perf = game.get('laptop_perf', '🟢 1080p Playable')
     
     desc = game.get('description', '').strip()
     if len(desc) > 240:
@@ -185,6 +185,11 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
             "name": "🏷 Category",
             "value": f"`{cat_info['tag']}`",
             "inline": True
+        },
+        {
+            "name": "💻 MSI Katana GF66 (RTX 3050)",
+            "value": f"`{laptop_perf}`",
+            "inline": False
         },
         {
             "name": "📂 Genres",
@@ -230,7 +235,6 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
     elif game.get('poster'):
         main_embed["image"] = {"url": game['poster']}
 
-    # Action Row Buttons with TorBox Cloud Send & Links
     buttons = [
         {
             "type": 2,
@@ -248,7 +252,6 @@ def create_discord_payload(game: Dict[str, Any], is_update: bool = False) -> Dic
             "url": game['steam_url']
         })
 
-    # TorBox Cloud Web Link helper
     torbox_cloud_url = f"https://torbox.app/dashboard"
     buttons.append({
         "type": 2,

@@ -2,7 +2,6 @@ import json
 import urllib.request
 from typing import Dict, Any, Optional, List
 
-# Weighted categories with dedicated color themes and keywords
 CATEGORIES = {
     "sim_strategy": {
         "keywords": [
@@ -63,23 +62,32 @@ CATEGORIES = {
     }
 }
 
-def determine_category(title: str, genres: List[str]) -> Dict[str, Any]:
+def determine_category(title: str, genres: List[str], steam_genres: List[str] = None) -> Dict[str, Any]:
     """
-    Intelligently scores categories based on Title, Genre tags, and priority.
-    Prevents simulators (e.g. 'Empires of the Undergrowth', 'Devices Tycoon')
-    from getting falsely bucketed into Action & RPG just because of 'Open World' or 'Action'.
+    Intelligently scores categories combining:
+    1. Official Steam Store primary genres (highest authority, +8 points)
+    2. Game Title keywords (+6 points)
+    3. AnkerGames community tags (+3 points for top 3)
     """
     title_lower = title.lower()
     genres_lower = [g.lower() for g in genres]
+    steam_genres_lower = [g.lower() for g in (steam_genres or [])]
     scores = {cat: 0 for cat in CATEGORIES}
 
-    # 1. Title keyword matching gets an immediate high score (+6)
+    # 1. Official Steam Store Genres (Decisive authority)
+    for sg in steam_genres_lower:
+        for cat, cfg in CATEGORIES.items():
+            for kw in cfg["keywords"]:
+                if kw == sg or (len(kw) > 4 and kw in sg):
+                    scores[cat] += 8
+
+    # 2. Title keywords
     for cat, cfg in CATEGORIES.items():
         for kw in cfg["keywords"]:
             if kw in title_lower:
                 scores[cat] += 6
 
-    # 2. Genre matching with position weighting (first 3 primary tags have higher weight)
+    # 3. AnkerGames parsed tags
     for idx, g in enumerate(genres_lower):
         weight = 3 if idx < 3 else 1
         for cat, cfg in CATEGORIES.items():
@@ -103,8 +111,19 @@ def determine_category(title: str, genres: List[str]) -> Dict[str, Any]:
 
 def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[str, Any]:
     """Builds a rich Discord Embed with a 4-image screenshot collage grid + poster."""
-    cat_info = determine_category(game.get('title', ''), game.get('genres', []))
-    genre_str = ", ".join(game.get('genres', [])[:5]) or "Action / PC"
+    cat_info = determine_category(
+        game.get('title', ''),
+        game.get('genres', []),
+        game.get('steam_genres', [])
+    )
+    
+    # Combine genres for clean display: prioritize Steam genres first, then top Anker tags
+    all_genres = []
+    for g in (game.get('steam_genres', []) + game.get('genres', [])):
+        if g not in all_genres:
+            all_genres.append(g)
+    genre_str = ", ".join(all_genres[:5]) or "Action / PC"
+
     deck_str = "✅ Verified / Playable" if game.get('deck_verified') else "❔ Unchecked"
     
     desc = game.get('description', '').strip()
@@ -134,7 +153,7 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
                 "inline": True
             },
             {
-                "name": "📂 Genres",
+                "name": "📂 Genres (Steam)",
                 "value": f"{genre_str}",
                 "inline": True
             },
@@ -161,7 +180,6 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
     screenshots = game.get('screenshots', [])
     embeds = [main_embed]
 
-    # Discord 4-image collage: sharing the exact same `url` creates a native mosaic gallery
     if screenshots:
         main_embed["image"] = {"url": screenshots[0]}
         for shot_url in screenshots[1:4]:
@@ -207,7 +225,6 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
     return payload
 
 def send_discord_webhook(webhook_url: str, payload: Dict[str, Any]) -> bool:
-    """Delivers the payload to Discord webhook (supports both standard text and forum channels)."""
     try:
         target_url = webhook_url
         if "thread_name" in payload and "?wait=true" not in target_url:

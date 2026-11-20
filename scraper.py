@@ -9,6 +9,30 @@ HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
+def fetch_steam_metadata(app_id: str) -> Dict[str, Any]:
+    """Fetches official genre and category metadata directly from the official Steam Store API."""
+    if not app_id:
+        return {}
+    url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            entry = data.get(str(app_id), {})
+            if entry.get('success'):
+                app_data = entry.get('data', {})
+                genres = [g['description'] for g in app_data.get('genres', [])]
+                categories = [c['description'] for c in app_data.get('categories', [])]
+                return {
+                    'genres': genres,
+                    'categories': categories,
+                    'is_free': app_data.get('is_free', False),
+                    'header_image': app_data.get('header_image', '')
+                }
+    except Exception as e:
+        print(f"[SteamAPI] Error fetching AppID {app_id}: {e}")
+    return {}
+
 def fetch_recent_game_urls() -> List[str]:
     """Scrapes the latest games list from AnkerGames."""
     url = "https://ankergames.net/games-list"
@@ -28,7 +52,7 @@ def fetch_recent_game_urls() -> List[str]:
         return []
 
 def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
-    """Fetches and parses a single AnkerGames release using JSON-LD + HTML parsing."""
+    """Fetches and parses a single AnkerGames release using JSON-LD + Steam AppID API verification."""
     req = urllib.request.Request(game_url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -59,35 +83,39 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
             if not isinstance(genres, list):
                 genres = [genres] if genres else []
             
-            # Poster image
             images = video_game.get('image', [])
             poster = images[0] if (isinstance(images, list) and images) else ''
             
-            # Screenshots (up to 4 for Discord collage)
             screenshots = video_game.get('screenshot', [])
             if not isinstance(screenshots, list):
                 screenshots = [screenshots] if screenshots else []
             
-            # If no poster from image, pick first screenshot
             if not poster and screenshots:
                 poster = screenshots[0]
 
-            # Steam build number
             text_all = soup.get_text()
             build_match = re.search(r'Current Build\s*([0-9]+)', text_all)
             build = build_match.group(1) if build_match else 'N/A'
 
-            # Steam Store link
+            # Steam Store link & App ID
             steam_url = ''
+            steam_app_id = ''
             for a in soup.find_all('a', href=True):
-                if 'store.steampowered.com/app/' in a['href']:
-                    steam_url = a['href']
+                href = a['href']
+                if 'store.steampowered.com/app/' in href:
+                    steam_url = href
+                    m = re.search(r'store\.steampowered\.com/app/(\d+)', href)
+                    if m:
+                        steam_app_id = m.group(1)
                     break
             
-            # Steam Deck status
+            # 2. Enrich with Official Steam Genres if Steam AppID exists
+            steam_genres = []
+            if steam_app_id:
+                steam_meta = fetch_steam_metadata(steam_app_id)
+                steam_genres = steam_meta.get('genres', [])
+
             deck_verified = 'Deck' in text_all and ('DeckPlayable' in text_all or 'Deck Verified' in text_all)
-            
-            # Slug & ID
             slug = game_url.rstrip('/').split('/')[-1]
 
             return {
@@ -98,6 +126,8 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
                 'build': build,
                 'size': size,
                 'genres': genres,
+                'steam_genres': steam_genres,
+                'steam_app_id': steam_app_id,
                 'poster': poster,
                 'screenshots': screenshots[:4],
                 'url': game_url,

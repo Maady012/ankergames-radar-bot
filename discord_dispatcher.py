@@ -2,17 +2,20 @@ import json
 import urllib.request
 from typing import Dict, Any, Optional, List
 
+# Category Mappings matching channel names in your Discord category folder
 CATEGORIES = {
     "sim_strategy": {
+        "channel_name": "🏰-sim-strategy",
         "keywords": [
             "simulation", "simulator", "colony sim", "strategy", "tycoon", 
             "management", "building", "city builder", "automation", "turn-based",
             "resource management", "sandbox", "crafting", "farming"
         ],
-        "color": 15844367, # Gold / Amber
+        "color": 15844367, # Gold
         "tag": "🏰 Sim & Strategy"
     },
     "horror_survival": {
+        "channel_name": "👻-horror-survival",
         "keywords": [
             "horror", "psychological horror", "survival horror", "zombies", 
             "post-apocalyptic", "spooky"
@@ -21,6 +24,7 @@ CATEGORIES = {
         "tag": "👻 Horror & Survival"
     },
     "sports_racing": {
+        "channel_name": "🏎️-sports-racing",
         "keywords": [
             "racing", "sports", "driving", "automotive", "football", "basketball", 
             "flight sim", "motorcycle"
@@ -29,6 +33,7 @@ CATEGORIES = {
         "tag": "🏎️ Sports & Racing"
     },
     "coop_multiplayer": {
+        "channel_name": "⚔️-action-rpg",
         "keywords": [
             "co-op", "multiplayer", "online co-op", "local co-op", "pvp", "mmo", 
             "battle royale", "party game"
@@ -37,6 +42,7 @@ CATEGORIES = {
         "tag": "👥 Co-Op & Multiplayer"
     },
     "adventure_mystery": {
+        "channel_name": "🔍-adventure-mystery",
         "keywords": [
             "adventure", "puzzle", "detective", "mystery", "visual novel", 
             "story rich", "point & click", "investigation", "crime"
@@ -45,14 +51,16 @@ CATEGORIES = {
         "tag": "🔍 Adventure & Mystery"
     },
     "action_rpg": {
+        "channel_name": "⚔️-action-rpg",
         "keywords": [
             "action", "rpg", "action rpg", "souls", "souls-like", "hack and slash", 
             "open world", "fighting", "shooter", "fps", "tps", "slasher", "combat"
         ],
-        "color": 10181046, # Blurple / Dark Violet
+        "color": 10181046, # Blurple / Violet
         "tag": "⚔️ Action & RPG"
     },
     "indie_casual": {
+        "channel_name": "🎨-indie-casual",
         "keywords": [
             "indie", "casual", "2d", "platformer", "pixel graphics", "anime", 
             "cute", "relaxing", "arcade"
@@ -90,18 +98,19 @@ def determine_category(title: str, genres: List[str], steam_genres: List[str] = 
     if scores[best_cat] == 0:
         return {
             "category": "general",
+            "channel_name": "📢-all-releases",
             "color": 5793266,
             "tag": "🎮 PC Game Release"
         }
 
     return {
         "category": best_cat,
+        "channel_name": CATEGORIES[best_cat]["channel_name"],
         "color": CATEGORIES[best_cat]["color"],
         "tag": CATEGORIES[best_cat]["tag"]
     }
 
-def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[str, Any]:
-    """Builds a rich Discord Embed with Ratings, Top Review, 4-image collage grid & poster."""
+def create_discord_payload(game: Dict[str, Any]) -> Dict[str, Any]:
     cat_info = determine_category(
         game.get('title', ''),
         game.get('genres', []),
@@ -159,7 +168,6 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
         }
     ]
 
-    # Add Top Player Review block if available
     top_review = game.get('top_review', '').strip()
     if top_review:
         fields.append({
@@ -169,7 +177,7 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
         })
 
     main_embed = {
-        "title": f"🎮 {game['title']}",
+        "title": f"🎮 {game['title']} [{game.get('version', 'Latest')}]",
         "url": game['url'],
         "description": f"*{desc}*",
         "color": cat_info["color"],
@@ -219,35 +227,30 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
             "url": game['steam_url']
         })
 
-    payload = {
-        "username": "AnkerGames Radar",
-        "avatar_url": "https://ankergames.net/favicon/apple-touch-icon.png",
-        "embeds": embeds,
-        "components": components
+    return {
+        "payload": {
+            "embeds": embeds,
+            "components": components
+        },
+        "target_channel": cat_info["channel_name"]
     }
 
-    if is_forum:
-        payload["thread_name"] = f"{cat_info['tag']} | {game['title']} [{game.get('version', 'Latest')}]"
-
-    return payload
-
-def send_discord_webhook(webhook_url: str, payload: Dict[str, Any]) -> bool:
+def send_bot_message(bot_token: str, channel_id: str, payload: Dict[str, Any]) -> bool:
+    """Delivers message directly to a specific Discord Channel via Bot Token."""
     try:
-        target_url = webhook_url
-        if "thread_name" in payload and "?wait=true" not in target_url:
-            target_url += "?wait=true"
-
+        url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
-            target_url,
+            url,
             data=data,
             headers={
+                'Authorization': f'Bot {bot_token}',
                 'Content-Type': 'application/json',
-                'User-Agent': 'AnkerRadar/1.0 DiscordBot'
+                'User-Agent': 'DiscordBot (https://github.com/Maady012, 1.0)'
             }
         )
         with urllib.request.urlopen(req, timeout=12) as resp:
-            return resp.status in [200, 204]
+            return resp.status in [200, 201]
     except Exception as e:
-        print(f"[Discord] Failed to send notification: {e}")
+        print(f"[DiscordBot] Failed to send message to channel {channel_id}: {e}")
         return False

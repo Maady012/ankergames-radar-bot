@@ -10,28 +10,74 @@ HEADERS = {
 }
 
 def fetch_steam_metadata(app_id: str) -> Dict[str, Any]:
-    """Fetches official genre and category metadata directly from the official Steam Store API."""
+    """Fetches genres, rating summary, and top player review from Steam."""
     if not app_id:
         return {}
-    url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    
+    res = {
+        'genres': [],
+        'rating': 'N/A',
+        'top_review': ''
+    }
+
+    # 1. Official Steam Store API for Genres
     try:
+        url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             entry = data.get(str(app_id), {})
             if entry.get('success'):
                 app_data = entry.get('data', {})
-                genres = [g['description'] for g in app_data.get('genres', [])]
-                categories = [c['description'] for c in app_data.get('categories', [])]
-                return {
-                    'genres': genres,
-                    'categories': categories,
-                    'is_free': app_data.get('is_free', False),
-                    'header_image': app_data.get('header_image', '')
-                }
+                res['genres'] = [g['description'] for g in app_data.get('genres', [])]
     except Exception as e:
-        print(f"[SteamAPI] Error fetching AppID {app_id}: {e}")
-    return {}
+        pass
+
+    # 2. Steam Store Page for Overall Rating (e.g. 'Very Positive (90% of 2,394)')
+    try:
+        store_url = f"https://store.steampowered.com/app/{app_id}"
+        req = urllib.request.Request(
+            store_url,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+                'Cookie': 'wants_mature_content=1; birthtime=786240001'
+            }
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+            soup = BeautifulSoup(html, 'html.parser')
+            for div in soup.find_all(lambda t: t.has_attr('class') and any('review' in c for c in t['class'])):
+                txt = div.get_text(separator=' ', strip=True)
+                if 'All Reviews:' in txt or 'English Reviews:' in txt:
+                    m = re.search(r'([0-9]{1,3}%\s+of\s+[\d,]+)', txt)
+                    score_m = re.search(r'(Overwhelmingly Positive|Very Positive|Positive|Mostly Positive|Mixed|Mostly Negative|Negative)', txt)
+                    if m and score_m:
+                        res['rating'] = f"⭐ {score_m.group(1)} ({m.group(1)})"
+                        break
+    except Exception as e:
+        pass
+
+    # 3. Steam Community for Top Helpful User Review
+    try:
+        com_url = f"https://steamcommunity.com/app/{app_id}/reviews/?browsefilter=toprated&l=english"
+        com_req = urllib.request.Request(com_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
+        with urllib.request.urlopen(com_req, timeout=4) as resp:
+            com_html = resp.read().decode('utf-8', errors='ignore')
+            com_soup = BeautifulSoup(com_html, 'html.parser')
+            card = com_soup.find('div', class_='apphub_Card')
+            if card:
+                text_div = card.find('div', class_='apphub_CardTextContent')
+                if text_div:
+                    raw = text_div.get_text(separator=' ', strip=True)
+                    clean = re.sub(r'^Posted:\s*[^A-Za-z0-9]*[0-9]+(?:\s+[A-Za-z]+,?\s+[0-9]+)?', '', raw).strip()
+                    clean = re.sub(r'\s+', ' ', clean)
+                    if len(clean) > 160:
+                        clean = clean[:157] + '...'
+                    res['top_review'] = clean
+    except Exception as e:
+        pass
+
+    return res
 
 def fetch_recent_game_urls() -> List[str]:
     """Scrapes the latest games list from AnkerGames."""
@@ -52,14 +98,13 @@ def fetch_recent_game_urls() -> List[str]:
         return []
 
 def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
-    """Fetches and parses a single AnkerGames release using JSON-LD + Steam AppID API verification."""
+    """Fetches and parses an AnkerGames release, enriching with Steam Ratings and Reviews."""
     req = urllib.request.Request(game_url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             html = resp.read().decode('utf-8', errors='ignore')
             soup = BeautifulSoup(html, 'html.parser')
             
-            # 1. Primary extraction via Schema.org VideoGame JSON-LD
             video_game = {}
             for s in soup.find_all('script', type='application/ld+json'):
                 try:
@@ -109,11 +154,15 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
                         steam_app_id = m.group(1)
                     break
             
-            # 2. Enrich with Official Steam Genres if Steam AppID exists
+            # Enrich with Steam Genres, Rating & Top Review
             steam_genres = []
+            steam_rating = 'N/A'
+            top_review = ''
             if steam_app_id:
                 steam_meta = fetch_steam_metadata(steam_app_id)
                 steam_genres = steam_meta.get('genres', [])
+                steam_rating = steam_meta.get('rating', 'N/A')
+                top_review = steam_meta.get('top_review', '')
 
             deck_verified = 'Deck' in text_all and ('DeckPlayable' in text_all or 'Deck Verified' in text_all)
             slug = game_url.rstrip('/').split('/')[-1]
@@ -127,6 +176,8 @@ def parse_game_page(game_url: str) -> Optional[Dict[str, Any]]:
                 'size': size,
                 'genres': genres,
                 'steam_genres': steam_genres,
+                'steam_rating': steam_rating,
+                'top_review': top_review,
                 'steam_app_id': steam_app_id,
                 'poster': poster,
                 'screenshots': screenshots[:4],

@@ -63,31 +63,22 @@ CATEGORIES = {
 }
 
 def determine_category(title: str, genres: List[str], steam_genres: List[str] = None) -> Dict[str, Any]:
-    """
-    Intelligently scores categories combining:
-    1. Official Steam Store primary genres (highest authority, +8 points)
-    2. Game Title keywords (+6 points)
-    3. AnkerGames community tags (+3 points for top 3)
-    """
     title_lower = title.lower()
     genres_lower = [g.lower() for g in genres]
     steam_genres_lower = [g.lower() for g in (steam_genres or [])]
     scores = {cat: 0 for cat in CATEGORIES}
 
-    # 1. Official Steam Store Genres (Decisive authority)
     for sg in steam_genres_lower:
         for cat, cfg in CATEGORIES.items():
             for kw in cfg["keywords"]:
                 if kw == sg or (len(kw) > 4 and kw in sg):
                     scores[cat] += 8
 
-    # 2. Title keywords
     for cat, cfg in CATEGORIES.items():
         for kw in cfg["keywords"]:
             if kw in title_lower:
                 scores[cat] += 6
 
-    # 3. AnkerGames parsed tags
     for idx, g in enumerate(genres_lower):
         weight = 3 if idx < 3 else 1
         for cat, cfg in CATEGORIES.items():
@@ -110,14 +101,13 @@ def determine_category(title: str, genres: List[str], steam_genres: List[str] = 
     }
 
 def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[str, Any]:
-    """Builds a rich Discord Embed with a 4-image screenshot collage grid + poster."""
+    """Builds a rich Discord Embed with Ratings, Top Review, 4-image collage grid & poster."""
     cat_info = determine_category(
         game.get('title', ''),
         game.get('genres', []),
         game.get('steam_genres', [])
     )
     
-    # Combine genres for clean display: prioritize Steam genres first, then top Anker tags
     all_genres = []
     for g in (game.get('steam_genres', []) + game.get('genres', [])):
         if g not in all_genres:
@@ -125,10 +115,58 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
     genre_str = ", ".join(all_genres[:5]) or "Action / PC"
 
     deck_str = "✅ Verified / Playable" if game.get('deck_verified') else "❔ Unchecked"
+    rating_str = game.get('steam_rating', 'N/A')
     
     desc = game.get('description', '').strip()
-    if len(desc) > 280:
-        desc = desc[:280] + "..."
+    if len(desc) > 240:
+        desc = desc[:240] + "..."
+
+    fields = [
+        {
+            "name": "💾 File Size",
+            "value": f"`{game.get('size', 'Unknown')}`",
+            "inline": True
+        },
+        {
+            "name": "🏷 Version",
+            "value": f"`{game.get('version', 'Latest')}`",
+            "inline": True
+        },
+        {
+            "name": "⚙️ Steam Build",
+            "value": f"`{game.get('build', 'N/A')}`",
+            "inline": True
+        },
+        {
+            "name": "🌟 Steam Rating",
+            "value": f"`{rating_str}`",
+            "inline": True
+        },
+        {
+            "name": "🕹 Steam Deck",
+            "value": deck_str,
+            "inline": True
+        },
+        {
+            "name": "🏷 Category",
+            "value": f"`{cat_info['tag']}`",
+            "inline": True
+        },
+        {
+            "name": "📂 Genres",
+            "value": f"{genre_str}",
+            "inline": False
+        }
+    ]
+
+    # Add Top Player Review block if available
+    top_review = game.get('top_review', '').strip()
+    if top_review:
+        fields.append({
+            "name": "💬 Top Steam Review",
+            "value": f"> *\"{top_review}\"*",
+            "inline": False
+        })
 
     main_embed = {
         "title": f"🎮 {game['title']}",
@@ -136,38 +174,7 @@ def create_discord_payload(game: Dict[str, Any], is_forum: bool = True) -> Dict[
         "description": f"*{desc}*",
         "color": cat_info["color"],
         "thumbnail": {"url": game['poster']} if game.get('poster') else None,
-        "fields": [
-            {
-                "name": "💾 File Size",
-                "value": f"`{game.get('size', 'Unknown')}`",
-                "inline": True
-            },
-            {
-                "name": "🏷 Version",
-                "value": f"`{game.get('version', 'Latest')}`",
-                "inline": True
-            },
-            {
-                "name": "⚙️ Steam Build",
-                "value": f"`{game.get('build', 'N/A')}`",
-                "inline": True
-            },
-            {
-                "name": "📂 Genres (Steam)",
-                "value": f"{genre_str}",
-                "inline": True
-            },
-            {
-                "name": "🕹 Steam Deck",
-                "value": deck_str,
-                "inline": True
-            },
-            {
-                "name": "🏷 Category",
-                "value": f"`{cat_info['tag']}`",
-                "inline": True
-            }
-        ],
+        "fields": fields,
         "footer": {
             "text": "AnkerGames Radar • Pre-installed & SteamDB Synced",
             "icon_url": "https://ankergames.net/favicon/favicon-96x96.png"

@@ -59,7 +59,7 @@ def main():
         logging.error("DISCORD_BOT_TOKEN is not set.")
         return
 
-    logging.info("Starting Radar Scan (AnkerGames + Epic Free Games)...")
+    logging.info("Starting Radar Scan (All-Releases Unified Stream + Category Routing)...")
     channels = get_channel_mapping(DISCORD_BOT_TOKEN, GUILD_ID)
     all_releases_ch = channels.get('📢-all-releases')
     free_games_ch = channels.get('🎁-free-games')
@@ -72,12 +72,21 @@ def main():
         epic_games = fetch_epic_free_games()
         for fg in epic_games:
             fg_id = fg['id']
-            if fg_id not in seen and free_games_ch:
+            if fg_id not in seen:
                 logging.info(f"🎁 NEW EPIC FREE GIVEAWAY: {fg['title']}")
                 payload = create_free_game_payload(fg)
-                send_bot_message(DISCORD_BOT_TOKEN, free_games_ch, payload)
+                
+                # A) Post into #🎁-free-games
+                if free_games_ch:
+                    send_bot_message(DISCORD_BOT_TOKEN, free_games_ch, payload)
+                    time.sleep(1)
+
+                # B) ALSO mirror into #📢-all-releases so all-releases has EVERY single drop
+                if all_releases_ch:
+                    send_bot_message(DISCORD_BOT_TOKEN, all_releases_ch, payload)
+                    time.sleep(1)
+
                 seen.add(fg_id)
-                time.sleep(1)
     except Exception as e:
         logging.error(f"Error checking free games: {e}")
 
@@ -109,12 +118,14 @@ def main():
         target_name = dispatch_info['target_channel']
         target_ch_id = channels.get(target_name)
 
-        if target_ch_id:
-            send_bot_message(DISCORD_BOT_TOKEN, target_ch_id, payload)
+        # A) ALWAYS post into #📢-all-releases (Main unified hub for all categories + updates)
+        if all_releases_ch:
+            send_bot_message(DISCORD_BOT_TOKEN, all_releases_ch, payload)
             time.sleep(1)
 
-        if all_releases_ch and all_releases_ch != target_ch_id:
-            send_bot_message(DISCORD_BOT_TOKEN, all_releases_ch, payload)
+        # B) Post into its specific folder category channel (e.g. #🏰-sim-strategy, #⚔️-action-rpg)
+        if target_ch_id and target_ch_id != all_releases_ch:
+            send_bot_message(DISCORD_BOT_TOKEN, target_ch_id, payload)
             time.sleep(1)
 
         seen.add(game_id)
@@ -122,7 +133,7 @@ def main():
         new_count += 1
 
     save_seen_games(seen)
-    logging.info(f"Scan complete. Dispatched {new_count} new entries. State saved.")
+    logging.info(f"Scan complete. Dispatched {new_count} new entries to both #📢-all-releases and categories. State saved.")
 
 if __name__ == '__main__':
     main()
